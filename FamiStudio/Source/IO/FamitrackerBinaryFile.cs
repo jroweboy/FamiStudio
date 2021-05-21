@@ -274,10 +274,23 @@ namespace FamiStudio
                 instrument.Envelopes[EnvelopeType.N163Waveform].Values[j] = (sbyte)bytes[idx++];
 
             if (wavCount > 1)
-                Log.LogMessage(LogSeverity.Warning, $"N163 instrument index {instIdx} has more than 1 waveform ({wavCount}). All others will be ignored.");
-
-            // Skip any extra waves.
-            idx += (wavCount - 1) * fileWaveSize;
+            {
+                for (int j = 1; j < wavCount; j++)
+                {
+                    var wavInst = project.CreateInstrument(ExpansionType.N163, instrument.Name + " - Wave " + j);
+                    for (int k = 0; k < instrument.Envelopes.Length; k++)
+                    {
+                        wavInst.Envelopes[k] = instrument.Envelopes[k]?.ShallowClone();
+                    }
+                    wavInst.N163WavePreset = WavePresetType.Custom;
+                    wavInst.N163WaveSize = instrument.N163WaveSize;
+                    wavInst.N163WavePos = instrument.N163WavePos;
+                    var wavInstEnv = wavInst.Envelopes[EnvelopeType.N163Waveform];
+                    for (int k = 0; k < instrument.N163WaveSize; k++)
+                        wavInstEnv.Values[k] = (sbyte)bytes[idx++];
+                }
+                instrument.Name += " - Wave 0";
+            }
         }
 
         private void ReadInstrumentS5B(Instrument instrument, int instIdx, ref int idx)

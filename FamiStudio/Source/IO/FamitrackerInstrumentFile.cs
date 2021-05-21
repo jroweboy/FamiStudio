@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 
@@ -174,13 +175,26 @@ namespace FamiStudio
 
                 var wavEnv = instrument.Envelopes[EnvelopeType.N163Waveform];
 
-                // Only read the first wave for now.
                 for (int j = 0; j < waveSize; j++)
                     wavEnv.Values[j] = (sbyte)bytes[offset++];
 
                 if (waveCount > 1)
                 {
-                    Log.LogMessage(LogSeverity.Warning, $"Multiple N163 waveforms detected, only loading the first one.");
+                    for (int j = 1; j < waveCount; j++)
+                    {
+                        var wavInst = project.CreateInstrument(instType, instrument.Name + " - Wave " + j);
+                        for (int k = 0; k < instrument.Envelopes.Length; k++)
+                        {
+                            wavInst.Envelopes[k] = instrument.Envelopes[k]?.ShallowClone();
+                        }
+                        wavInst.N163WavePreset = WavePresetType.Custom;
+                        wavInst.N163WaveSize = instrument.N163WaveSize;
+                        wavInst.N163WavePos = instrument.N163WavePos;
+                        var wavInstEnv = wavInst.Envelopes[EnvelopeType.N163Waveform];
+                        for (int k = 0; k < waveSize; k++)
+                            wavInstEnv.Values[k] = (sbyte)bytes[offset++];
+                    }
+                    instrument.Name += " - Wave 0";
                 }
             }
 

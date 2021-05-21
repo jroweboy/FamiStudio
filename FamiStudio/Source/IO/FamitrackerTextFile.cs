@@ -48,10 +48,18 @@ namespace FamiStudio
             "B-"
         };
 
+        private class N163State
+        {
+            // Famitracker defaults to waveform 0, but for the others, we should've loaded that information before hand
+            public byte noteValue = 0xFF;
+            public int instrument = -1;
+            public int waveform = 0;
+        };
+
         public Project Load(string filename)
         {
             var envelopes   = new Dictionary<int, Envelope>[ExpansionType.Count, EnvelopeType.Count];
-            var instruments = new Dictionary<int, Instrument>();
+            var instruments = new Dictionary<String, Instrument>();
             var dpcms       = new Dictionary<int, DPCMSample>();
             var columns     = new int[5] { 1, 1, 1, 1, 1 };
 
@@ -66,6 +74,11 @@ namespace FamiStudio
             int dpcmWriteIdx = 0;
             Song song = null;
             string patternName = "";
+            var n163StateTracker = new Dictionary<int, N163State>();
+            for (int i = ChannelType.N163Wave1; i <= ChannelType.N163Wave8; i++)
+            {
+                n163StateTracker[i] = new N163State();
+            }
 
             var lines = File.ReadAllLines(filename);
 
@@ -235,6 +248,7 @@ namespace FamiStudio
                         };
 
                         var instrument = CreateUniquelyNamedInstrument(expansion, param[param.Length - 1]);
+                        var wavCount = 0;
 
                         if (expansion == ExpansionType.N163)
                         {
@@ -242,9 +256,7 @@ namespace FamiStudio
                             instrument.N163WaveSize   = byte.Parse(param[6]);
                             instrument.N163WavePos    = byte.Parse(param[7]);
 
-                            var wavCount = byte.Parse(param[8]);
-                            if (wavCount > 1)
-                                Log.LogMessage(LogSeverity.Warning, $"N163 instrument '{instrument.Name}' has more than 1 waveform ({wavCount}). All others will be ignored.");
+                            wavCount = byte.Parse(param[8]);
                         }
 
                         for (int envTypeIdx = 0; envTypeIdx <= EnvelopeType.DutyCycle; envTypeIdx++)
@@ -254,13 +266,32 @@ namespace FamiStudio
                                 instrument.Envelopes[envTypeIdx] = envelopes[expansion, envTypeIdx][envIdx].ShallowClone();
                         }
 
-                        instruments[idx] = instrument;
+                        if (wavCount > 1)
+                        {
+                            for (int j = 1; j < wavCount; j++)
+                            {
+                                var wavInst = CreateUniquelyNamedInstrument(ExpansionType.N163, instrument.Name + " - Wave " + j);
+                                for (int k = 0; k < instrument.Envelopes.Length; k++)
+                                {
+                                    wavInst.Envelopes[k] = instrument.Envelopes[k]?.ShallowClone();
+                                }
+                                wavInst.N163WavePreset = WavePresetType.Custom;
+                                wavInst.N163WaveSize = instrument.N163WaveSize;
+                                wavInst.N163WavePos = instrument.N163WavePos;
+                                instruments[idx.ToString() + " - " + j] = wavInst;
+                            }
+                            instrument.Name += " - Wave 0";
+                        }
+                        if (expansion == ExpansionType.N163)
+                            instruments[idx.ToString() + " - 0"] = instrument;
+                        else 
+                            instruments[idx.ToString()] = instrument;
                     }
                     else if (line.StartsWith("INSTVRC7"))
                     {
                         var param = SplitStringKeepQuotes(line.Substring(line.IndexOf(' ')));
 
-                        int idx = int.Parse(param[0]);
+                        String idx = int.Parse(param[0]).ToString();
                         var instrument = CreateUniquelyNamedInstrument(ExpansionType.Vrc7, param[param.Length - 1]);
 
                         instrument.Vrc7Patch = byte.Parse(param[1]);
@@ -276,7 +307,7 @@ namespace FamiStudio
                     {
                         var param = SplitStringKeepQuotes(line.Substring(line.IndexOf(' ')));
 
-                        int idx       = int.Parse(param[0]);
+                        String idx       = int.Parse(param[0]).ToString();
                         int modEnable = int.Parse(param[1]);
                         int modSpeed  = int.Parse(param[2]);
                         int modDepth  = int.Parse(param[3]);
@@ -302,7 +333,7 @@ namespace FamiStudio
                         var param = halves[0].Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
                         var curve = halves[1].Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
 
-                        var inst = int.Parse(param[0]);
+                        var inst = int.Parse(param[0]).ToString();
                         var type = int.Parse(param[1]);
                         var loop = int.Parse(param[2]);
                         var rel  = int.Parse(param[3]);
@@ -331,7 +362,7 @@ namespace FamiStudio
                         var param = halves[0].Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
                         var curve = halves[1].Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
 
-                        var inst = int.Parse(param[0]);
+                        var inst = int.Parse(param[0]).ToString();
                         var env = instruments[inst].Envelopes[mod ? EnvelopeType.FdsModulation : EnvelopeType.FdsWaveform];
                         for (int j = 0; j < curve.Length; j++)
                             env.Values[j] = sbyte.Parse(curve[j]);
@@ -342,17 +373,14 @@ namespace FamiStudio
                     {
                         var param = line.Substring(8).Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
 
-                        var instIdx = int.Parse(param[0]);
+                        var instIdx = int.Parse(param[0]).ToString();
                         var waveIdx = int.Parse(param[1]);
 
-                        // TODO: We could create different instruments for each wave.
-                        if (waveIdx == 0)
-                        {
-                            var env = instruments[instIdx].Envelopes[EnvelopeType.N163Waveform];
+                        var idx = instIdx + " - " + waveIdx;
+                        var env = instruments[idx].Envelopes[EnvelopeType.N163Waveform];
 
-                            for (int j = 3; j < param.Length; j++)
-                                env.Values[j - 3] = sbyte.Parse(param[j]);
-                        }
+                        for (int j = 3; j < param.Length; j++)
+                            env.Values[j - 3] = sbyte.Parse(param[j]);
                     }
                     else if (line.StartsWith("TRACK"))
                     {
@@ -393,6 +421,11 @@ namespace FamiStudio
                     else if (line.StartsWith("PATTERN"))
                     {
                         patternName = line.Substring(8);
+                        // Famitracker doesn't keep N163 state between patterns, so reset it when encountering a new one
+                        for (int j = ChannelType.N163Wave1; j <= ChannelType.N163Wave8; j++)
+                        {
+                            n163StateTracker[j] = new N163State();
+                        }
                     }
                     else if (line.StartsWith("ROW"))
                     {
@@ -425,7 +458,7 @@ namespace FamiStudio
                                 int famitoneNote;
 
                                 if (j == 4)
-                                { 
+                                {
                                     famitoneNote = (Convert.ToInt32(noteData[0].Substring(0, 1), 16) + 31) + 1;
                                 }
                                 else
@@ -438,9 +471,41 @@ namespace FamiStudio
                                 if (famitoneNote >= Note.MusicalNoteMin && famitoneNote <= Note.MusicalNoteMax)
                                 {
                                     var note = pattern.GetOrCreateNoteAt(n);
-                                    instruments.TryGetValue(Convert.ToInt32(noteData[1], 16), out var foundInstrument);
+                                    var instIdx = Convert.ToInt32(noteData[1], 16);
+                                    if (instIdx == 7)
+                                    {
+                                        Log.LogMessage(LogSeverity.Info, "break");
+                                    }
+
+                                    // Famitracker keeps the current selection for N163 waveform around after an effect happens, this means
+                                    // that whenever a note is selected for the N163 channels, we may need to choose a different instrument
+                                    // if the currentWaveSelection is not zero
+                                    String noteIdx;
+                                    if (pattern.Channel.Type >= ChannelType.N163Wave1 && pattern.Channel.Type <= ChannelType.N163Wave8)
+                                    {
+                                        // If the Famitracker instrument has changed, then reset the tracked waveform to zero
+                                        // If its supposed to use a nonzero waveform, then an effect will change it later
+                                        if (instIdx != n163StateTracker[pattern.Channel.Type].instrument)
+                                        {
+                                            n163StateTracker[pattern.Channel.Type].waveform = 0;
+                                        }
+                                        noteIdx = instIdx + " - " + n163StateTracker[pattern.Channel.Type].waveform;
+                                    } else
+                                    {
+                                        noteIdx = instIdx.ToString();
+                                    }
+                                    var yawinningson = instruments.TryGetValue(noteIdx, out var foundInstrument);
                                     note.Value = (byte)famitoneNote;
                                     note.Instrument = j == 5 ? null : foundInstrument;
+                                    if (pattern.Channel.Type >= ChannelType.N163Wave1 && pattern.Channel.Type <= ChannelType.N163Wave8)
+                                    {
+                                        n163StateTracker[pattern.Channel.Type].instrument = instIdx;
+                                        n163StateTracker[pattern.Channel.Type].noteValue = note.Value;
+                                    }
+                                    if (!yawinningson)
+                                    {
+                                        Log.LogMessage(LogSeverity.Info, "break");
+                                    }
                                 }
                                 else
                                 {
@@ -473,6 +538,22 @@ namespace FamiStudio
                                 patternFxData[pattern][n, k] = fx;
 
                                 ApplySimpleEffects(fx, pattern, n, patternLengths, true);
+
+                                // If the currentWaveSelection is changing, then we need to update the selected instrument to the correct wave
+                                if (pattern.Channel.Type >= ChannelType.N163Wave1 && pattern.Channel.Type <= ChannelType.N163Wave8 && fx.fx == Effect_DutyCycle)
+                                {
+                                    n163StateTracker[pattern.Channel.Type].waveform = fx.param;
+                                    var noteIdx = n163StateTracker[pattern.Channel.Type].instrument + " - " + n163StateTracker[pattern.Channel.Type].waveform;
+                                    var update = pattern.GetOrCreateNoteAt(n);
+                                    if (instruments.TryGetValue(noteIdx, out var foundInstrument))
+                                    {
+                                        update.Instrument = foundInstrument;
+                                        update.Value = n163StateTracker[pattern.Channel.Type].noteValue;
+                                    } else
+                                    {
+                                        Log.LogMessage(LogSeverity.Error, $"Could not find instrument when updating the n163 note.");
+                                    }
+                                }
                             }
                         }
                     }
